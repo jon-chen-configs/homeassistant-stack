@@ -62,10 +62,6 @@ services:
       - grafana_config:/etc/grafana
       - grafana_data:/var/lib/grafana
       - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
-    # extra_hosts:
-    #   - keycloak.cynicsoft.net:172.18.0.1
-    # expose:
-    #   - 3000
 
   homeassistant:
     image: homeassistant/home-assistant:stable
