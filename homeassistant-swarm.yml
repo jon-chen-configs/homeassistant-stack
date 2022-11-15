@@ -1,0 +1,256 @@
+services:
+  esphome:
+    image: esphome/esphome:latest
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.platform.arch != aarch64
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=traefik-net
+        - traefik.http.routers.esphome.rule=Host(`esphome.cynicsoft.net`)
+        - traefik.http.routers.esphome.entrypoints=https
+        - traefik.http.routers.esphome.middlewares=internal-whitelist
+        - traefik.http.services.esphome.loadbalancer.server.port=6052
+    environment:
+      - HOME="/"
+    networks:
+      - traefik-net
+      - default
+    ports:
+      # - 0.0.0.0:6052:6052
+      - 0.0.0.0:6123:6123
+    volumes:
+      - esphome_config:/config:rw
+
+  grafana:
+    image: grafana/grafana
+    env_file: ["${ENV_DIR:-swarm-envs}/swarm/homeassistant-stack/grafana.env"]
+    deploy:
+      replicas: 1
+      placement:
+        # Docker (20.10.3) on Synology bug where env vars from env_file 
+        # not set on container.
+        # constraints: [node.platform.arch != aarch64]
+        constraints:
+          - node.platform.arch != aarch64
+          - node.hostname != ${NAS_HOSTNAME}
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=traefik-net
+        - traefik.http.routers.grafana.rule=Host(`grafana.cynicsoft.net`)
+        - traefik.http.routers.grafana.entrypoints=https
+        - traefik.http.routers.grafana.middlewares=internal-whitelist
+        - traefik.http.services.grafana.loadbalancer.server.port=3000
+    networks:
+      - traefik-net
+      - default
+    user: 0:0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - grafana_config:/etc/grafana
+      - grafana_data:/var/lib/grafana
+      - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
+    # extra_hosts:
+    #   - keycloak.cynicsoft.net:172.18.0.1
+    # expose:
+    #   - 3000
+
+  homeassistant:
+    image: homeassistant/home-assistant:stable
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.platform.arch != aarch64
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      labels: 
+        - traefik.enable=true
+        - traefik.docker.network=traefik-net
+        - traefik.http.routers.hass-internal.entrypoints=https
+        - traefik.http.routers.hass-internal.rule=Host(`home.cynicsoft.net`)
+        - traefik.http.routers.hass.rule=Host(`cynicsoft2.duckdns.org`) || Host(`home-cynicsoft.duckdns.org`)
+        - traefik.http.routers.hass.entrypoints=https
+        - traefik.http.services.hass.loadbalancer.server.port=8123
+    volumes: 
+      - homeassistant_config:/config
+      - shared_ssh:/root/.ssh:ro
+      - shared_ssh:/shared/.ssh:ro
+      - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
+    networks:
+      traefik-net:
+      default:
+      # for direct connections like HomeKit and discoveries
+      macvlan:
+        ipv4_address: 192.168.20.5
+        ipv6_address: 2601:c6:8300:1df::83
+    ports:
+      - 8123:8123
+      - 51827:51827
+    environment: 
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+
+  influxdb:
+    image: influxdb:1.8
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    networks:
+      - default
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - influxdb_data:/var/lib/influxdb
+    environment:
+      - INFLUXDB_UDP_ENABLED=true
+    labels:
+      - traefik.enable=false
+
+  mariadb:
+    image: mariadb:10.5.4
+    env_file: ["${ENV_DIR:-swarm-envs}/swarm/homeassistant-stack/mariadb.env"]
+    deploy:
+      replicas: 1
+      placement:
+        # Docker (20.10.3) on Synology bug where env vars from env_file 
+        # not set on container.
+        # constraints: [node.platform.arch != aarch64]
+        constraints:
+          - node.platform.arch != aarch64
+          - node.hostname != ${NAS_HOSTNAME}
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - mariadb_shared:/shared
+      - mariadb_config:/etc/mysql/conf.d
+      - mariadb_data:/var/lib/mysql
+    networks:
+      - default
+
+  mosquitto:
+    image: eclipse-mosquitto
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=traefik-net
+        - traefik.tcp.routers.mqtt.rule=HostSNI(`*`)
+        - traefik.tcp.routers.mqtt.entrypoints=mqtt
+        - traefik.tcp.routers.mqtt.service=mqtt
+        - traefik.tcp.services.mqtt.loadbalancer.server.port=1883
+        - traefik.tcp.routers.mqtt-websocket.entrypoints=mqtt_websocket
+        - traefik.tcp.routers.mqtt-websocket.rule=HostSNI(`*`)
+        - traefik.tcp.routers.mqtt-websocket.service=mqtt-websocket
+        - traefik.tcp.services.mqtt-websocket.loadbalancer.server.port=9001
+    networks:
+      - traefik-net
+      - default
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - mosquitto_config:/mosquitto/config
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+
+
+volumes:
+  esphome_config:
+    driver_opts:
+      type: nfs
+      o: addr=${NAS_HOST},nolock,noresvport,vers=2
+      device: :${CONFDIR}/homeassistant-stack/esphome
+  grafana_config:
+    driver_opts:
+      type: nfs
+      o: addr=${NAS_HOST},nolock,noresvport,vers=2
+      device: :${CONFDIR}/homeassistant-stack/grafana
+  grafana_data:
+    driver_opts:
+      type: nfs
+      o: addr=${NAS_HOST},nolock,noresvport,vers=2
+      device: :${DATADIR}/homeassistant-stack/grafana
+  homeassistant_config:
+    driver_opts:
+      type: nfs
+      o: addr=${NAS_HOST},nolock,noresvport,vers=2
+      device: :${CONFDIR}/homeassistant-stack/homeassistant/config
+  influxdb_data:
+    driver_opts:
+      type: nfs
+      o: addr=${NAS_HOST},nolock,noresvport,vers=2
+      device: :${DATADIR}/homeassistant-stack/influxdb
+  mariadb_config:
+    driver_opts:
+      type: nfs
+      o: addr=${NAS_HOST},nolock,noresvport,vers=2
+      device: :${CONFDIR}/homeassistant-stack/mariadb/conf.d
+  mariadb_shared:
+    driver_opts:
+      type: nfs
+      o: addr=${NAS_HOST},nolock,noresvport,vers=2
+      device: :${CONFDIR}/homeassistant-stack/mariadb/shared
+  mariadb_data:
+    driver_opts:
+      type: nfs
+      o: addr=${NAS_HOST},nolock,noresvport,vers=2
+      device: :${DATADIR}/homeassistant-stack/mariadb
+  mosquitto_config:
+    driver_opts:
+      type: nfs
+      o: addr=${NAS_HOST},nolock,noresvport,vers=2
+      device: :${CONFDIR}/homeassistant-stack/mosquitto
+  mosquitto_data:
+    driver_opts:
+      type: nfs
+      o: addr=${NAS_HOST},nolock,noresvport,vers=2
+      device: :${DATADIR}/homeassistant-stack/mosquitto
+  mosquitto_log:
+    driver_opts:
+      type: nfs
+      o: addr=${NAS_HOST},nolock,noresvport,vers=2
+      device: :${DATADIR}/homeassistant-stack/mosquitto_log
+  shared_ssh:
+    driver_opts:
+      type: nfs
+      o: addr=${NAS_HOST},nolock,noresvport,vers=2
+      device: :${CONFDIR}/shared/.ssh
+
+networks:
+  traefik-net:
+    external: true
+  healthchecks-swarm_default:
+    external: true
+  macvlan:
+    external: true

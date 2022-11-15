@@ -1,0 +1,29 @@
+services:
+  zwavejs2mqtt:
+    image: zwavejs/zwavejs2mqtt:latest
+    env_file: ["${ENV_DIR:-swarm-envs}/swarm/homeassistant-stack/zwavejs2mqtt.env"]
+    hostname: zwavejs2mqtt
+    restart: always
+    tty: true
+    stop_signal: SIGINT
+    environment:
+      - TZ=${TZ}
+    networks:
+      - traefik-net
+    devices:
+      - /dev/ttyACM0:/dev/ttyACM0
+    volumes:
+      - zwavejs2mqtt_store:/usr/src/app/store
+
+
+volumes:
+  zwavejs2mqtt_store:
+    driver_opts:
+      type: nfs
+      o: addr=${NAS_HOST},nolock,noresvport,vers=2
+      device: :${DATADIR}/homeassistant-stack/zwavejs2mqtt/store
+
+
+networks:
+  traefik-net:
+    external: true
