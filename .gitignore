@@ -1,5 +1,5 @@
 esphome/
 grafana/
-homeassistant/
+homeassistant/config-*/
 mariadb/
 mosquitto/
